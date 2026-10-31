@@ -493,11 +493,19 @@ print("Project root:", PROJECT_ROOT)
 print("Device:", device)
 
 # Use the model already present on the local computer.
-# On Render, where the model directory is not included in Git,
-# download the model repository from Hugging Face.
-if MODEL_PATH.is_dir():
+asr = None
+if MODEL_PATH.is_dir() and any(MODEL_PATH.iterdir()):
     model_source = str(MODEL_PATH)
     print("Using local IndicWhisper model:", model_source)
+    try:
+        asr = pipeline(
+            "automatic-speech-recognition",
+            model=str(MODEL_PATH),
+            device=device,
+        )
+        print("IndicWhisper loaded successfully.")
+    except Exception as exc:
+        print(f"Warning: Failed to load local IndicWhisper model: {exc}")
 else:
     HF_MODEL_REPO = os.getenv(
         "HF_MODEL_REPO",
@@ -505,45 +513,29 @@ else:
     ).strip()
     HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
 
-    if not HF_MODEL_REPO:
-        raise RuntimeError(
-            "The local IndicWhisper model directory was not found and "
-            "HF_MODEL_REPO is not configured."
-        )
-
     print("Local model directory not found:", MODEL_PATH)
-    print("Downloading IndicWhisper from Hugging Face:", HF_MODEL_REPO)
+    if HF_MODEL_REPO and HF_TOKEN:
+        print("Downloading IndicWhisper from Hugging Face:", HF_MODEL_REPO)
+        try:
+            model_source = snapshot_download(
+                repo_id=HF_MODEL_REPO,
+                repo_type="model",
+                token=HF_TOKEN,
+            )
+            MODEL_PATH = Path(model_source)
+            print("IndicWhisper downloaded to:", model_source)
+            print("Loading IndicWhisper...")
+            asr = pipeline(
+                "automatic-speech-recognition",
+                model=str(MODEL_PATH),
+                device=device,
+            )
+            print("IndicWhisper loaded successfully.")
+        except Exception as exc:
+            print(f"Warning: Could not download/load IndicWhisper model from Hugging Face: {exc}")
+    else:
+        print("IndicWhisper model not present locally. Model loading deferred.")
 
-    try:
-        model_source = snapshot_download(
-            repo_id=HF_MODEL_REPO,
-            repo_type="model",
-            token=HF_TOKEN,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            "Could not download the IndicWhisper model from Hugging Face. "
-            "Check that HF_MODEL_REPO is correct, HF_TOKEN has read access "
-            "if the repository is private, and the model files are available. "
-            f"Original error: {type(exc).__name__}: {exc}"
-        ) from exc
-
-    print("IndicWhisper downloaded to:", model_source)
-
-# Keep MODEL_PATH pointed at the actual model location so that the
-# /system/status endpoint reports the downloaded model correctly.
-MODEL_PATH = Path(model_source)
-
-print("Model path:", MODEL_PATH)
-print("Loading IndicWhisper...")
-
-asr = pipeline(
-    "automatic-speech-recognition",
-    model=str(MODEL_PATH),
-    device=device,
-)
-
-print("IndicWhisper loaded successfully.")
 print("=" * 60)
 
 
@@ -564,8 +556,8 @@ def root():
 @app.get("/health")
 def health():
     return {
-        "status": "healthy",
-        "model_loaded": True,
+        "status": "healthy" if asr is not None else "degraded",
+        "model_loaded": asr is not None,
         "model": "IndicWhisper Tamil",
         "device": device,
     }
@@ -894,6 +886,12 @@ def transcribe_processed_audio(
     recordings remain one model pass to avoid reducing context unnecessarily.
     """
     print("Transcribing with IndicWhisper...")
+
+    if asr is None:
+        raise HTTPException(
+            status_code=503,
+            detail="IndicWhisper Tamil model is not loaded. Please download or configure the model weights in models/.",
+        )
 
     generate_kwargs = {"language": "ta", "task": "transcribe"}
     chunk_seconds = TRANSCRIPTION_CHUNK_SECONDS

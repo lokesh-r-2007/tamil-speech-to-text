@@ -1,7 +1,7 @@
 @echo off
 title Tamil Speech-to-Text API
 
-cd /d C:\tamil_speech_to_text
+cd /d "%~dp0"
 
 echo ============================================
 echo Starting Tamil Speech-to-Text API

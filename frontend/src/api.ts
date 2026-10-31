@@ -139,10 +139,17 @@ async function parseApiError(response: Response): Promise<string> {
 }
 
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
   try {
-    return await fetch(`${API_BASE_URL}${path}`, init);
+    return await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: init.signal || controller.signal,
+    });
   } catch {
     throw new Error("Cannot connect to the TamilTranscribe backend. Make sure FastAPI is running and try again.");
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -224,7 +231,9 @@ export async function registerUser(input: {
   return parseAuthResponse(response, input.rememberMe);
 }
 
-export async function fetchCurrentUser(): Promise<AuthUser> {
+export async function fetchCurrentUser(): Promise<AuthUser | null> {
+  const token = storedToken();
+  if (!token) return null;
   const response = await authenticatedRequest("/auth/me");
   if (!response.ok) throw new Error(await parseApiError(response));
   return response.json();
